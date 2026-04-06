@@ -1,0 +1,408 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Klassische Mühle - Mobile Optimized</title>
+    <style>
+        :root {
+            --bg-color: #f8f9fa;
+            --line-color: #333;
+            --player1-color: #ffffff; /* Weiß */
+            --player2-color: #222222; /* Schwarz */
+            --highlight: #00acc1;
+            --danger: #e53935;
+        }
+
+        * { box-sizing: border-box; }
+
+        html, body {
+            margin: 0; padding: 0;
+            width: 100vw; height: 100dvh;
+            overflow: hidden;
+            background-color: var(--bg-color);
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            display: flex; flex-direction: column; align-items: center;
+        }
+
+        .header {
+            height: 120px; width: 100%;
+            display: flex; flex-direction: column;
+            justify-content: center; align-items: center;
+            flex-shrink: 0;
+            z-index: 10;
+            position: relative; 
+        }
+
+        h1 { margin: 0 0 5px 0; font-size: 28px; color: #333; }
+        
+        #status-box {
+            background: #fff;
+            padding: 8px 20px;
+            border-radius: 20px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+            font-size: 16px;
+            font-weight: bold;
+            color: #555;
+            text-align: center;
+            transition: all 0.3s ease;
+            max-width: 90%; /* Verhindert, dass der Text auf kleinen Displays abgeschnitten wird */
+        }
+
+        #restart-btn {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            padding: 8px 16px;
+            background: #333; color: white;
+            border: none; border-radius: 20px;
+            cursor: pointer; font-weight: bold; font-size: 14px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.2);
+            transition: transform 0.1s;
+        }
+        
+        #restart-btn:active { transform: scale(0.95); }
+
+        .board-container {
+            flex-grow: 1;
+            width: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 10px;
+        }
+
+        /* SVG Spielfeld */
+        svg {
+            width: min(95vw, calc(100dvh - 150px));
+            height: min(95vw, calc(100dvh - 150px));
+            filter: drop-shadow(0 10px 15px rgba(0,0,0,0.1));
+            background: #e9ecef;
+            border-radius: 10px;
+            
+            /* NEU: Optimierungen für flüssiges Tippen auf dem Handy */
+            touch-action: manipulation;
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        /* Linien des Spielfelds */
+        line, rect {
+            fill: none;
+            stroke: var(--line-color);
+            stroke-width: 6;
+            stroke-linecap: round;
+            stroke-linejoin: round;
+        }
+
+        /* Die Gruppe, die den Klick abfängt */
+        .node-group {
+            cursor: pointer;
+        }
+
+        /* Der Hover-Effekt liegt jetzt auf der Gruppe, betrifft aber nur ungesetzte Steine */
+        .node-group:hover .node:not(.player1):not(.player2) {
+            fill: rgba(0, 0, 0, 0.06);
+        }
+
+        /* Der eigentliche visuelle Spielstein */
+        .node {
+            fill: transparent; 
+            stroke: transparent;
+            stroke-width: 4;
+            transition: all 0.2s ease;
+        }
+        
+        /* Sichtbare Steine, wenn gesetzt */
+        .node.player1 { fill: var(--player1-color); stroke: #ccc; }
+        .node.player2 { fill: var(--player2-color); stroke: #000; }
+
+        .node.selected {
+            stroke: var(--highlight);
+            stroke-width: 6;
+            filter: drop-shadow(0 0 8px var(--highlight));
+        }
+
+        /* Die Steine, die geschlagen werden dürfen */
+        .node.removable {
+            stroke: var(--danger);
+            stroke-width: 6;
+            animation: pulse 1s infinite alternate;
+        }
+
+        @keyframes pulse {
+            from { filter: drop-shadow(0 0 4px var(--danger)); }
+            to { filter: drop-shadow(0 0 15px var(--danger)); }
+        }
+
+    </style>
+</head>
+<body>
+
+    <div class="header">
+        <h1>Mühle</h1>
+        <div id="status-box">Weiß ist am Zug (Setzphase)</div>
+        <button id="restart-btn" onclick="resetGame()">Neustart</button>
+    </div>
+
+    <div class="board-container">
+        <svg id="board" viewBox="0 0 600 600"></svg>
+    </div>
+
+    <script>
+        const points = [
+            [50, 50], [300, 50], [550, 50], [550, 300], [550, 550], [300, 550], [50, 550], [50, 300],
+            [150, 150], [300, 150], [450, 150], [450, 300], [450, 450], [300, 450], [150, 450], [150, 300],
+            [250, 250], [300, 250], [350, 250], [350, 300], [350, 350], [300, 350], [250, 350], [250, 300]
+        ];
+
+        const adjacency = [
+            [1, 7], [0, 2, 9], [1, 3], [2, 4, 11], [3, 5], [4, 6, 13], [5, 7], [0, 6, 15],
+            [9, 15], [8, 10, 1, 17], [9, 11], [10, 12, 3, 19], [11, 13], [12, 14, 5, 21], [13, 15], [14, 8, 7, 23],
+            [17, 23], [16, 18, 9], [17, 19], [18, 20, 11], [19, 21], [20, 22, 13], [21, 23], [22, 16, 15]
+        ];
+
+        const mills = [
+            [0,1,2], [2,3,4], [4,5,6], [6,7,0],
+            [8,9,10], [10,11,12], [12,13,14], [14,15,8],
+            [16,17,18], [18,19,20], [20,21,22], [22,23,16],
+            [1,9,17], [3,11,19], [5,13,21], [7,15,23]
+        ];
+
+        let board = Array(24).fill(null);
+        let currentPlayer = 'W';
+        let phase = 1;
+        let unplacedPieces = { W: 9, B: 9 };
+        let piecesOnBoard = { W: 0, B: 0 };
+        let selectedNode = null;
+        let gameOver = false;
+
+        function initBoard() {
+            const svg = document.getElementById('board');
+            let html = '';
+
+            html += `<rect x="50" y="50" width="500" height="500" />`;
+            html += `<rect x="150" y="150" width="300" height="300" />`;
+            html += `<rect x="250" y="250" width="100" height="100" />`;
+
+            html += `<line x1="300" y1="50" x2="300" y2="250" />`;
+            html += `<line x1="300" y1="350" x2="300" y2="550" />`;
+            html += `<line x1="50" y1="300" x2="250" y2="300" />`;
+            html += `<line x1="350" y1="300" x2="550" y2="300" />`;
+
+            // NEU: Wir wickeln jeden Knoten in eine Gruppe (g) mit einer riesigen unsichtbaren Hitbox
+            points.forEach((p, index) => {
+                html += `
+                <g class="node-group" onclick="handleNodeClick(${index})">
+                    <circle cx="${p[0]}" cy="${p[1]}" r="45" fill="transparent" stroke="transparent" pointer-events="all" />
+                    <circle id="node-${index}" cx="${p[0]}" cy="${p[1]}" r="22" class="node" />
+                </g>`;
+            });
+
+            svg.innerHTML = html;
+        }
+
+        function handleNodeClick(index) {
+            if (gameOver) return;
+
+            if (phase === 3) {
+                handleRemovePhase(index);
+            } else if (phase === 1) {
+                handlePlacePhase(index);
+            } else if (phase === 2) {
+                handleMovePhase(index);
+            }
+        }
+
+        function handlePlacePhase(index) {
+            if (board[index] !== null) return;
+
+            board[index] = currentPlayer;
+            unplacedPieces[currentPlayer]--;
+            piecesOnBoard[currentPlayer]++;
+            
+            if (checkForMill(index, currentPlayer)) {
+                enterRemovePhase();
+            } else {
+                switchPlayer();
+                checkIfPlacePhaseOver();
+            }
+            updateVisuals();
+        }
+
+        function handleMovePhase(index) {
+            if (board[index] === currentPlayer) {
+                selectedNode = selectedNode === index ? null : index;
+                updateVisuals();
+                return;
+            }
+
+            if (selectedNode !== null && board[index] === null) {
+                let canFly = piecesOnBoard[currentPlayer] <= 3;
+                let isAdjacent = adjacency[selectedNode].includes(index);
+
+                if (canFly || isAdjacent) {
+                    board[index] = currentPlayer;
+                    board[selectedNode] = null;
+                    selectedNode = null;
+
+                    if (checkForMill(index, currentPlayer)) {
+                        enterRemovePhase();
+                    } else {
+                        switchPlayer();
+                        checkWinCondition();
+                    }
+                    updateVisuals();
+                }
+            }
+        }
+
+        function handleRemovePhase(index) {
+            const opponent = currentPlayer === 'W' ? 'B' : 'W';
+            
+            if (board[index] !== opponent) return;
+            
+            if (isPartOfMill(index, opponent) && !allOpponentPiecesInMill(opponent)) {
+                alert("Dieser Stein ist Teil einer geschlossenen Mühle! Du musst einen anderen wählen.");
+                return;
+            }
+
+            board[index] = null;
+            piecesOnBoard[opponent]--;
+            
+            phase = (unplacedPieces['W'] === 0 && unplacedPieces['B'] === 0) ? 2 : 1;
+            
+            switchPlayer();
+            checkWinCondition();
+            updateVisuals(); 
+        }
+
+        function checkForMill(index, player) {
+            return mills.some(mill => 
+                mill.includes(index) && 
+                mill.every(point => board[point] === player)
+            );
+        }
+
+        function isPartOfMill(index, player) {
+            return mills.some(mill =>
+                mill.includes(index) && mill.every(point => board[point] === player)
+            );
+        }
+
+        function allOpponentPiecesInMill(opponent) {
+            for (let i = 0; i < 24; i++) {
+                if (board[i] === opponent && !isPartOfMill(i, opponent)) {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        function enterRemovePhase() {
+            phase = 3;
+            selectedNode = null;
+            updateStatusText();
+        }
+
+        function switchPlayer() {
+            currentPlayer = currentPlayer === 'W' ? 'B' : 'W';
+            updateStatusText();
+        }
+
+        function checkIfPlacePhaseOver() {
+            if (unplacedPieces['W'] === 0 && unplacedPieces['B'] === 0 && phase === 1) {
+                phase = 2;
+                updateStatusText();
+            }
+        }
+
+        function checkWinCondition() {
+            if (phase === 1) return;
+
+            const opponent = currentPlayer;
+            if (piecesOnBoard[opponent] < 3) {
+                declareWinner(opponent === 'W' ? 'B' : 'W');
+                return;
+            }
+
+            if (piecesOnBoard[opponent] > 3) {
+                let hasValidMove = adjacency.some((adjList, i) => 
+                    board[i] === opponent && adjList.some(adj => board[adj] === null)
+                );
+                if (!hasValidMove) {
+                    declareWinner(opponent === 'W' ? 'B' : 'W');
+                }
+            }
+        }
+
+        function declareWinner(winner) {
+            gameOver = true;
+            const wName = winner === 'W' ? 'Weiß' : 'Schwarz';
+            const color = winner === 'W' ? '#555' : '#222';
+            document.getElementById('status-box').innerHTML = `<span style="color:${color}; font-size:20px;">🎉 ${wName} hat gewonnen! 🎉</span>`;
+        }
+
+        function updateStatusText() {
+            if (gameOver) return;
+            const pName = currentPlayer === 'W' ? 'Weiß' : 'Schwarz';
+            const color = currentPlayer === 'W' ? '#555' : '#000';
+            const bg = currentPlayer === 'W' ? '#fff' : '#e0e0e0';
+            
+            const box = document.getElementById('status-box');
+            box.style.color = color;
+            box.style.background = bg;
+
+            if (phase === 1) {
+                box.innerText = `${pName} am Zug (Noch ${unplacedPieces[currentPlayer]} Steine)`;
+            } else if (phase === 2) {
+                const isFlying = piecesOnBoard[currentPlayer] <= 3 ? " (Darf fliegen!)" : "";
+                box.innerText = `${pName} am Zug - Stein bewegen${isFlying}`;
+            } else if (phase === 3) {
+                box.style.background = "var(--danger)";
+                box.style.color = "#fff";
+                box.innerText = `Mühle! Klicke auf einen roten Stein, um ihn zu schlagen.`;
+            }
+        }
+
+        function updateVisuals() {
+            for (let i = 0; i < 24; i++) {
+                const el = document.getElementById(`node-${i}`);
+                
+                let className = 'node';
+                
+                if (board[i] === 'W') className += ' player1';
+                if (board[i] === 'B') className += ' player2';
+                if (i === selectedNode) className += ' selected';
+
+                if (phase === 3) {
+                    const opponent = currentPlayer === 'W' ? 'B' : 'W';
+                    if (board[i] === opponent) {
+                        if (!isPartOfMill(i, opponent) || allOpponentPiecesInMill(opponent)) {
+                            className += ' removable'; 
+                        }
+                    }
+                }
+                
+                el.setAttribute('class', className);
+            }
+        }
+
+        function resetGame() {
+            board = Array(24).fill(null);
+            currentPlayer = 'W';
+            phase = 1;
+            unplacedPieces = { W: 9, B: 9 };
+            piecesOnBoard = { W: 0, B: 0 };
+            selectedNode = null;
+            gameOver = false;
+            document.getElementById('status-box').style.background = '#fff';
+            updateStatusText();
+            updateVisuals();
+        }
+
+        initBoard();
+        updateStatusText();
+
+    </script>
+</body>
+</html>
